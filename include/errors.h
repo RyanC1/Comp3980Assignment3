@@ -1,0 +1,10 @@
+#ifndef TEMPLATE_C_PROGRAM_ERRORS_H
+#define TEMPLATE_C_PROGRAM_ERRORS_H
+
+enum errors
+{
+    ERR_USAGE,
+    ERR_SOCKET,
+};
+
+#endif    // TEMPLATE_C_PROGRAM_ERRORS_H
