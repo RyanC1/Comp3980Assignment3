@@ -43,7 +43,7 @@ static p101_fsm_state_t handle_requests(const struct p101_env *env, struct p101_
 static void             handle_new_connection(const struct p101_env *env, struct p101_error *err, int socket_fd, int **client_sockets, nfds_t *max_clients, struct pollfd **fds);
 static void             handle_client_data(const struct p101_env *env, struct p101_error *err, struct pollfd fd, int client_socket);
 static char * read_client_file(const struct p101_env *env, struct p101_error *err, char *filepath);
-static void             respond(const struct p101_env *env, struct p101_error *err, int client_socket, char *filepath);
+static void             respond(const struct p101_env *env, struct p101_error *err, int client_socket, char *message);
 static void             handle_client_disconnection(const struct p101_env *env, struct p101_error *err, int **client_sockets, nfds_t *max_clients, struct pollfd **fds, nfds_t client_index);
 static p101_fsm_state_t usage(const struct p101_env *env, struct p101_error *err, void *context);
 static p101_fsm_state_t cleanup(const struct p101_env *env, struct p101_error *err, void *context);
@@ -508,6 +508,7 @@ static char * read_client_file(const struct p101_env *env, struct p101_error *er
     {
         P101_ERROR_RAISE_USER(err, "Failed to client file", ERR_OTHER);
     }
+    client_fd = -1;
 
     if (response == NULL)
     {
@@ -522,8 +523,6 @@ static char * read_client_file(const struct p101_env *env, struct p101_error *er
 
 static void respond(const struct p101_env *env, struct p101_error *err, int client_socket, char *message)
 {
-    int client_fd;
-
     P101_TRACE(env);
 
     if(strlen(message) > UINT16_MAX)
@@ -638,6 +637,42 @@ static p101_fsm_state_t cleanup(const struct p101_env *env, struct p101_error *e
         p101_error_reset(err);
         ctx->exit_code = EXIT_FAILURE;
     }
+
+    free(ctx->fds);
+
+    // Cleanup and close all client sockets
+    for(size_t i = 0; i < ctx->max_clients; i++)
+    {
+        if(ctx->client_sockets[i] > 0)
+        {
+            p101_close(env, err, ctx->client_sockets[i]);
+            if(p101_error_has_error(err))
+            {
+                fputs(p101_error_get_message(err), stderr);
+                fputc('\n', stderr);
+                p101_error_reset(err);
+            }
+            else
+            {
+                ctx->client_sockets[i] = -1;
+            }
+        }
+    }
+
+    free(ctx->client_sockets);
+
+    if(p101_close(env, err, ctx->socket_fd) == -1)
+    {
+        fputs(p101_error_get_message(err), stderr);
+        fputc('\n', stderr);
+        p101_error_reset(err);
+    }
+    else
+    {
+        ctx->socket_fd = -1;
+    }
+
+    unlink(ctx->arguments->socket_path);
 
     return P101_FSM_EXIT;
 }

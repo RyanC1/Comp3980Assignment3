@@ -12,9 +12,6 @@ struct contextd
     nfds_t         max_clients;
     struct pollfd *fds;
 
-    int   request_fd;
-    char *response_message;
-
     int exit_code;
 };
 
