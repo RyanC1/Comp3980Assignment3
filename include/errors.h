@@ -5,6 +5,7 @@ enum errors
 {
     ERR_USAGE,
     ERR_SOCKET,
+    ERR_OTHER
 };
 
 #endif    // TEMPLATE_C_PROGRAM_ERRORS_H

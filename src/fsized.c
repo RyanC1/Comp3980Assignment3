@@ -14,9 +14,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/stat.h>
 #include <sys/poll.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/un.h>
 
 enum states
@@ -30,23 +30,23 @@ enum states
 };
 
 static volatile sig_atomic_t exit_flag = 0;    // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
+static volatile sig_atomic_t client_socket_close = 0;    // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
 
-static void           setup_signal_handlers(void);
-static void           sig_handler(int signal);
-static p101_fsm_state parse_arguments(const struct p101_env *env, struct p101_error *err, void *context);
-static p101_fsm_state handle_arguments(const struct p101_env *env, struct p101_error *err, void *context);
-static int            socket_create(const struct p101_env *env, struct p101_error *err);
-static void           socket_bind(const struct p101_env *env, struct p101_error *err, int socket_fd, const char *path);
-static void           socket_close(const struct p101_env *env, struct p101_error *err, int socket_fd);
-static p101_fsm_state wait_for_request(const struct p101_env *env, struct p101_error *err, void *context);
-static p101_fsm_state handle_requests(const struct p101_env *env, struct p101_error *err, void *context);
-static void           handle_new_connection(const struct p101_env *env, struct p101_error *err, int socket_fd, int **client_sockets, nfds_t *max_clients, struct pollfd **fds);
-static void           handle_client_data(const struct p101_env *env, struct p101_error *err, struct pollfd fd, int client_socket, nfds_t *max_clients);
-static void           handle_client_disconnection(const struct p101_env *env, struct p101_error *err, int **client_sockets, nfds_t *max_clients, struct pollfd **fds, nfds_t client_index);
-static p101_fsm_state respond(const struct p101_env *env, struct p101_error *err, void *context);
-static p101_fsm_state cleanup_response(const struct p101_env *env, struct p101_error *err, void *context);
-static p101_fsm_state usage(const struct p101_env *env, struct p101_error *err, void *context);
-static p101_fsm_state cleanup_program(const struct p101_env *env, struct p101_error *err, void *context);
+static void             setup_signal_handlers(void);
+static void             sig_handler(int signal);
+static p101_fsm_state_t parse_arguments(const struct p101_env *env, struct p101_error *err, void *context);
+static p101_fsm_state_t handle_arguments(const struct p101_env *env, struct p101_error *err, void *context);
+static int              socket_create(const struct p101_env *env, struct p101_error *err);
+static void             socket_bind(const struct p101_env *env, struct p101_error *err, int socket_fd, const char *path);
+static p101_fsm_state_t wait_for_request(const struct p101_env *env, struct p101_error *err, void *context);
+static p101_fsm_state_t handle_requests(const struct p101_env *env, struct p101_error *err, void *context);
+static void             handle_new_connection(const struct p101_env *env, struct p101_error *err, int socket_fd, int **client_sockets, nfds_t *max_clients, struct pollfd **fds);
+static void             handle_client_data(const struct p101_env *env, struct p101_error *err, struct pollfd fd, int client_socket);
+static char * read_client_file(const struct p101_env *env, struct p101_error *err, char *filepath);
+static void             respond(const struct p101_env *env, struct p101_error *err, int client_socket, char *filepath);
+static void             handle_client_disconnection(const struct p101_env *env, struct p101_error *err, int **client_sockets, nfds_t *max_clients, struct pollfd **fds, nfds_t client_index);
+static p101_fsm_state_t usage(const struct p101_env *env, struct p101_error *err, void *context);
+static p101_fsm_state_t cleanup(const struct p101_env *env, struct p101_error *err, void *context);
 
 #define MSG_LEN 256    // NOLINT(cppcoreguidelines-macro-to-enum, modernize-macro-to-enum)
 
@@ -81,12 +81,24 @@ static void sig_handler(int signal)
     {
         exit_flag = 1;
     }
+    else if(signal == SIGPIPE)
+    {
+        client_socket_close = 1;
+    }
 }
 
 int main(int argc, char *argv[])
 {
     static struct p101_fsm_transition transitions[] = {
-
+        {P101_FSM_INIT,    PARSE_ARGS,       parse_arguments },
+        {PARSE_ARGS,       HANDLE_ARGS,      handle_arguments},
+        {PARSE_ARGS,       USAGE,            usage           },
+        {HANDLE_ARGS,      WAIT_FOR_REQUEST, wait_for_request},
+        {WAIT_FOR_REQUEST, HANDLE_REQUESTS,  handle_requests },
+        {WAIT_FOR_REQUEST, CLEANUP,          cleanup         },
+        {HANDLE_REQUESTS,  WAIT_FOR_REQUEST, wait_for_request},
+        {USAGE,            CLEANUP,          cleanup         },
+        {CLEANUP,          P101_FSM_EXIT,    NULL            }
     };
 
     struct p101_error    *err;
@@ -142,10 +154,14 @@ int main(int argc, char *argv[])
 
     fsm = p101_fsm_info_create(env, err, "fsized-fsm", fsm_env, fsm_err, NULL);
 
+    // TODO check for error
+
     p101_fsm_run(fsm, &from_state, &to_state, &ctx, transitions, sizeof(transitions));
     p101_fsm_info_destroy(env, &fsm);
 
-    free(fsm_env);
+    // TODO check for error
+
+    p101_free(fsm_env, fsm_err);
 
 free_fsm_error:
     p101_error_reset(fsm_err);
@@ -162,7 +178,7 @@ done:
     return ctx.exit_code;
 }
 
-static p101_fsm_state parse_arguments(const struct p101_env *env, struct p101_error *err, void *context)
+static p101_fsm_state_t parse_arguments(const struct p101_env *env, struct p101_error *err, void *context)
 {
     struct contextd *ctx;
     p101_fsm_state_t next_state;
@@ -234,7 +250,7 @@ static p101_fsm_state parse_arguments(const struct p101_env *env, struct p101_er
     return next_state;
 }
 
-p101_fsm_state handle_arguments(const struct p101_env *env, struct p101_error *err, void *context)
+p101_fsm_state_t handle_arguments(const struct p101_env *env, struct p101_error *err, void *context)
 {
     struct contextd *ctx;
     p101_fsm_state_t next_state;
@@ -243,11 +259,9 @@ p101_fsm_state handle_arguments(const struct p101_env *env, struct p101_error *e
     ctx        = (struct contextd *)context;
     next_state = WAIT_FOR_REQUEST;
 
-    unlink(ctx->arguments->socket_path);
-
     ctx->socket_fd = socket_create(env, err);
 
-    if(p101_error_has_no_error(err))
+    if(ctx->socket_fd != -1 && p101_error_has_no_error(err))
     {
         socket_bind(env, err, ctx->socket_fd, ctx->arguments->socket_path);
 
@@ -294,56 +308,58 @@ static void socket_bind(const struct p101_env *env, struct p101_error *err, int 
 
     P101_TRACE(env);
 
-    memset(&addr, 0, sizeof(addr));
-    addr.sun_family = AF_UNIX;
-    strncpy(addr.sun_path, path, sizeof(addr.sun_path) - 1);
-    addr.sun_path[sizeof(addr.sun_path) - 1] = '\0';
-
-    if(bind(socket_fd, (struct sockaddr *)&addr, sizeof(addr)) == -1)
+    if(unlink(path) == -1)
     {
-        P101_ERROR_RAISE_USER(err, "Failed to bind socket", ERR_SOCKET);
+        P101_ERROR_RAISE_USER(err, "Failed to unlink", ERR_SOCKET);
+    }
+    else
+    {
+        memset(&addr, 0, sizeof(addr));
+        addr.sun_family = AF_UNIX;
+
+        if(strlen(path) >= sizeof(addr.sun_path))
+        {
+            P101_ERROR_RAISE_USER(err, "Socket path too long to accurately bind", ERR_SOCKET);
+        }
+        else
+        {
+            strncpy(addr.sun_path, path, sizeof(addr.sun_path) - 1);
+            addr.sun_path[sizeof(addr.sun_path) - 1] = '\0';
+
+            if(bind(socket_fd, (struct sockaddr *)&addr, sizeof(addr)) == -1)
+            {
+                P101_ERROR_RAISE_USER(err, "Failed to bind socket", ERR_SOCKET);
+            }
+        }
     }
 }
 
-static void socket_close(const struct p101_env *env, struct p101_error *err, int socket_fd)
-{
-    P101_TRACE(env);
-
-    if(close(socket_fd) == -1)
-    {
-        P101_ERROR_RAISE_USER(err, "Socket closure failed", ERR_SOCKET);
-    }
-
-    printf("Socket closed.\n");
-}
-
-static p101_fsm_state wait_for_request(const struct p101_env *env, struct p101_error *err, void *context)
+static p101_fsm_state_t wait_for_request(const struct p101_env *env, struct p101_error *err, void *context)
 {
     struct contextd *ctx;
     p101_fsm_state_t next_state;
+    int              poll_result;
 
     P101_TRACE(env);
     ctx        = (struct contextd *)context;
     next_state = HANDLE_REQUESTS;
 
-    int activity;
-
-    activity = poll(ctx->fds, ctx->max_clients + 1, -1);
+    poll_result = poll(ctx->fds, ctx->max_clients + 1, -1);
 
     if(exit_flag)
     {
         next_state = CLEANUP;
     }
-    else if(activity < 0)
+    else if(poll_result < 0)
     {
-        P101_ERROR_RAISE_USER(err, "Poll failed", ERR_SOCKET);
+        P101_ERROR_RAISE_USER(err, "Poll failed", ERR_OTHER);
         next_state = CLEANUP;
     }
 
     return next_state;
 }
 
-static p101_fsm_state handle_requests(const struct p101_env *env, struct p101_error *err, void *context)
+static p101_fsm_state_t handle_requests(const struct p101_env *env, struct p101_error *err, void *context)
 {
     struct contextd *ctx;
     p101_fsm_state_t next_state;
@@ -354,13 +370,24 @@ static p101_fsm_state handle_requests(const struct p101_env *env, struct p101_er
 
     handle_new_connection(env, err, ctx->socket_fd, &ctx->client_sockets, &ctx->max_clients, &ctx->fds);
 
-    if(ctx->client_sockets != NULL)
+    if(p101_error_has_no_error(err) && ctx->client_sockets != NULL)
     {
         for(nfds_t i = 0; i < ctx->max_clients; i++)
         {
-            handle_client_data(env, err, ctx->fds[i + 1], ctx->client_sockets[i], &ctx->max_clients);
+            if(ctx->client_sockets[i] != -1 && (ctx->fds[i + 1].revents & POLLIN))
+            {
+                handle_client_data(env, err, ctx->fds[i + 1], ctx->client_sockets[i]);
+                handle_client_disconnection(env, err, &ctx->client_sockets, &ctx->max_clients, &ctx->fds, i);
+            }
         }
     }
+
+    if(p101_error_has_error(err))
+    {
+        next_state = CLEANUP;
+    }
+
+    return next_state;
 }
 
 void handle_new_connection(const struct p101_env *env, struct p101_error *err, int socket_fd, int **client_sockets, nfds_t *max_clients, struct pollfd **fds)
@@ -369,13 +396,10 @@ void handle_new_connection(const struct p101_env *env, struct p101_error *err, i
 
     if((*fds)[0].revents & POLLIN)
     {
-        socklen_t          addrlen;
         int                new_socket;
         int               *temp;
-        struct sockaddr_un addr;
 
-        addrlen    = sizeof(addr);
-        new_socket = accept(socket_fd, (struct sockaddr *)&addr, &addrlen);
+        new_socket = accept(socket_fd, NULL, NULL);
 
         if(new_socket == -1)
         {
@@ -389,7 +413,7 @@ void handle_new_connection(const struct p101_env *env, struct p101_error *err, i
             if(p101_error_has_no_error(err))
             {
                 struct pollfd *new_fds;
-                *client_sockets                       = temp;
+                *client_sockets                     = temp;
                 (*client_sockets)[*max_clients - 1] = new_socket;
 
                 new_fds = (struct pollfd *)p101_realloc(env, err, *fds, (*max_clients + 1) * sizeof(struct pollfd));
@@ -402,68 +426,61 @@ void handle_new_connection(const struct p101_env *env, struct p101_error *err, i
                 }
             }
         }
-
     }
 }
 
-void handle_client_data(const struct p101_env *env, struct p101_error *err, struct pollfd fds, int client_socket, nfds_t *max_clients)
+void handle_client_data(const struct p101_env *env, struct p101_error *err, struct pollfd fds, int client_socket)
 {
+    uint16_t filename_length;
+
     P101_TRACE(env);
 
-    if(client_socket != -1 && (fds.revents & POLLIN))
+    if(safe_read(client_socket, &filename_length, sizeof(uint16_t), true) < 0)
     {
-        uint16_t filename_length;
+        respond(env, err, client_socket, "Failed to parse size of filename");
+    }
+    else
+    {
+        char *filename;
+        filename = (char *)p101_malloc(env, err, filename_length);
 
-        if(safe_read(client_socket, &filename_length, sizeof(uint16_t),true) < 0)
+        if(p101_error_has_no_error(err))
         {
-            // Connection closed or error
-            printf("Client %d disconnected\n", client_socket);
-            // handle_client_disconnection(&client_socket, max_clients, &fds, i);
-        }
-        else
-        {
-            char * filename;
-            filename = (char *)p101_malloc(env, err, filename_length);
-
-            if(p101_error_has_no_error(err))
+            if(safe_read(client_socket, filename, filename_length, true) < 0)
             {
-
+                respond(env, err, client_socket, "Failed to parse filename");
             }
             else
             {
-                if(safe_read(client_socket, filename, filename_length,true) < 0)
-                {
+                char *msg;
+                msg = read_client_file(env, err, filename);
 
-                }
-                else
+                if(p101_error_has_no_error(err) && msg != NULL)
                 {
-                    respond();
-                    cleanup_response();
+                    respond(env, err, client_socket, filename);
                 }
+
+                p101_free(env, msg);
             }
-
-
-
         }
+
+        p101_free(env, filename);
     }
 }
 
-void handle_client_disconnection(const struct p101_env *env, struct p101_error *err, int **client_sockets, nfds_t *max_clients, struct pollfd **fds, nfds_t client_index)
-{
-
-}
-
-p101_fsm_state respond(const struct p101_env *env, struct p101_error *err, int client_socket, char *filepath)
+static char * read_client_file(const struct p101_env *env, struct p101_error *err, char *filepath)
 {
     int client_fd;
+    char *response;
 
     P101_TRACE(env);
 
+    response = NULL;
     client_fd = open(filepath, O_RDONLY);
 
     if(client_fd == -1)
     {
-
+        response = concat_string("Could not open file: ", filepath);
     }
     else
     {
@@ -471,25 +488,156 @@ p101_fsm_state respond(const struct p101_env *env, struct p101_error *err, int c
 
         if(fstat(client_fd, &file_stat) == -1)
         {
-
+            response = concat_string("Could not create fstat of: ", filepath);
         }
         else
         {
-
+            char *tmp_response;
+            tmp_response = concat_string(filepath, " Size in bytes: ");
+            if(tmp_response != NULL)
+            {
+                char size[sizeof(file_stat.st_size)];
+                snprintf(size, sizeof(size), "%lu", file_stat.st_size);
+                response = concat_string(tmp_response, size);
+            }
         }
 
     }
+
+    if(p101_close(env, err, client_fd) == -1)
+    {
+        P101_ERROR_RAISE_USER(err, "Failed to client file", ERR_OTHER);
+    }
+
+    if (response == NULL)
+    {
+        P101_ERROR_RAISE_ERRNO(err, errno);
+    }
+
+    return response;
 }
 
-p101_fsm_state cleanup_response(const struct p101_env *env, struct p101_error *err, void *context)
-{
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-parameter"
 
+static void respond(const struct p101_env *env, struct p101_error *err, int client_socket, char *message)
+{
+    int client_fd;
+
+    P101_TRACE(env);
+
+    if(strlen(message) > UINT16_MAX)
+    {
+        const char too_big_msg[] = "Response too big to send";
+        const uint16_t too_big_msg_len = strlen(too_big_msg);
+
+        printf("Response \"%s\" too large to send.\n", message);
+
+        safe_write(client_socket, &too_big_msg_len, sizeof(uint16_t));
+        safe_write(client_socket, too_big_msg, sizeof(uint16_t));
+    }
+    else
+    {
+        uint16_t safe_message_length;
+
+        safe_message_length = (uint16_t)strlen(message);
+
+        safe_write(client_socket, &safe_message_length, sizeof(uint16_t));
+        safe_write(client_socket, message, safe_message_length);
+    }
+
+    if(client_socket_close == 1)
+    {
+        printf("Client Socket closed before response \"%s\" finished.\n", message);
+        client_socket_close = 0;
+    }
+    else
+    {
+        printf("Successfully sent response \"%s\" to client.\n", message);
+    }
 }
 
-static p101_fsm_state usage(const struct p101_env *env, struct p101_error *err, void *context)
+#pragma GCC diagnostic pop
+
+
+static void handle_client_disconnection(const struct p101_env *env, struct p101_error *err, int **client_sockets, nfds_t *max_clients, struct pollfd **fds, nfds_t client_index)
 {
+    int disconnected_socket;
+
+    P101_TRACE(env);
+
+    disconnected_socket = (*client_sockets)[client_index];
+
+    if(p101_close(env, err, disconnected_socket) == -1)
+    {
+        P101_ERROR_RAISE_USER(err, "Failed to close client connection", ERR_SOCKET);
+    }
+    else
+    {
+        for(nfds_t i = client_index; i < *max_clients - 1; i++)
+        {
+            (*client_sockets)[i] = (*client_sockets)[i + 1];
+        }
+
+        (*max_clients)--;
+
+        for(nfds_t i = client_index + 1; i <= *max_clients; i++)
+        {
+            (*fds)[i] = (*fds)[i + 1];
+        }
+    }
 }
 
-static p101_fsm_state cleanup_program(const struct p101_env *env, struct p101_error *err, void *context)
+static p101_fsm_state_t usage(const struct p101_env *env, struct p101_error *err, void *context)
 {
+    struct contextd *ctx;
+
+    P101_TRACE(env);
+    ctx = (struct contextd *)context;
+
+    if(p101_error_has_error(err))
+    {
+        const char *msg;
+        msg = p101_error_get_message(err);
+
+        if(msg != NULL)
+        {
+            fputs(msg, stderr);
+            fputc('\n', stderr);
+        }
+
+        p101_error_reset(err);
+        ctx->exit_code = EXIT_FAILURE;
+    }
+
+    fprintf(stderr, "Usage: %s [-h] <socket-path> \n", ctx->arguments->program_name);
+    fputs("Options:\n", stderr);
+    fputs(" -h Display this help message\n", stderr);
+
+    return CLEANUP;
+}
+
+static p101_fsm_state_t cleanup(const struct p101_env *env, struct p101_error *err, void *context)
+{
+    struct contextd *ctx;
+
+    P101_TRACE(env);
+    ctx = (struct contextd *)context;
+
+    if(p101_error_has_error(err))
+    {
+        const char *msg;
+        msg = p101_error_get_message(err);
+
+        if(msg != NULL)
+        {
+            fputs(msg, stderr);
+            fputc('\n', stderr);
+        }
+
+        p101_error_reset(err);
+        ctx->exit_code = EXIT_FAILURE;
+    }
+
+    return P101_FSM_EXIT;
 }

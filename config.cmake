@@ -23,12 +23,14 @@ set(LIBRARY_TARGETS "")
 
 set(fsized_SOURCES
         src/fsized.c
+        src/util.c
 )
 
 set(fsized_HEADERS
         include/argumentsd.h
         include/contextd.h
         include/errorsd.h
+        include/util.h
 )
 
 set(fsized_LINK_LIBRARIES

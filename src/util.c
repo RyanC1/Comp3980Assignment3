@@ -1,12 +1,15 @@
 #include "../include/util.h"
 #include <errno.h>
 #include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 ssize_t safe_read(const int fd, void *buf, const size_t count, bool exact)
 {
     uint8_t *p;
-    size_t         total;
-    ssize_t        n;
+    size_t   total;
+    ssize_t  n;
 
     p     = buf;
     total = 0;
@@ -35,7 +38,7 @@ ssize_t safe_read(const int fd, void *buf, const size_t count, bool exact)
 ssize_t safe_write(int fd, const void *buf, size_t n)
 {
     const uint8_t *p;
-    size_t               left;
+    size_t         left;
 
     p    = (const uint8_t *)buf;
     left = n;
@@ -57,4 +60,18 @@ ssize_t safe_write(int fd, const void *buf, size_t n)
         return -1;
     }
     return (ssize_t)n;
+}
+
+char * concat_string(const char * str1, const char * str2)
+{
+    size_t len = strlen(str1) + strlen(str2);
+
+    char *result = (char*)malloc(len + 1);
+    if (result == NULL) {
+        return NULL;
+    }
+
+    snprintf(result, len, "%s%s", str1, str2);
+
+    return result;
 }
