@@ -18,7 +18,8 @@ set(STANDARD_FLAGS
 )
 
 # Define targets
-set(EXECUTABLE_TARGETS fsized)
+set(EXECUTABLE_TARGETS fsized
+        fsize)
 set(LIBRARY_TARGETS "")
 
 set(fsized_SOURCES
@@ -29,7 +30,7 @@ set(fsized_SOURCES
 set(fsized_HEADERS
         include/argumentsd.h
         include/contextd.h
-        include/errorsd.h
+        include/errors.h
         include/util.h
 )
 
@@ -43,3 +44,27 @@ set(fsized_LINK_LIBRARIES
         p101_convert
         m
 )
+
+set(fsize_SOURCES
+        src/fsize.c
+        src/util.c
+)
+
+set(fsize_HEADERS
+        include/arguments.h
+        include/context.h
+        include/errors.h
+        include/util.h
+)
+
+set(fsize_LINK_LIBRARIES
+        p101_error
+        p101_env
+        p101_c
+        p101_posix
+        p101_unix
+        p101_fsm
+        p101_convert
+        m
+)
+

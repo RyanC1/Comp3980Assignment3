@@ -3,6 +3,7 @@
 
 #include <stdbool.h>
 #include <unistd.h>
+#include <sys/un.h>
 
 /**
  * Safely reads count bytes from the given file descriptor or until eof.
@@ -29,5 +30,9 @@ ssize_t safe_read(int fd, void *buf, size_t count, bool exact);
 ssize_t safe_write(int fd, const void *buf, size_t n);
 
 char * concat_string(const char * str1, const char * str2);
+
+int create_un_socket();
+
+int init_un_addr(struct sockaddr_un *addr, const char *path);
 
 #endif    // UTIL_H
