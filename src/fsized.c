@@ -469,7 +469,7 @@ static char *read_client_file(const struct p101_env *env, struct p101_error *err
     P101_TRACE(env);
 
     response  = NULL;
-    client_fd = open(filepath, O_RDONLY | O_CLOEXEC);
+    client_fd = open(filepath, O_RDONLY | O_CLOEXEC | O_NONBLOCK);
 
     if(client_fd == -1)
     {
