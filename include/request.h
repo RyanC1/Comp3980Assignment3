@@ -5,7 +5,6 @@
 
 struct request
 {
-    int *server_fd;
     struct sockaddr_un *addr;
 
     unsigned int *min_delay;

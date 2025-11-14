@@ -6,7 +6,6 @@ struct context
 {
     struct arguments *arguments;
 
-    int socket_fd;
     struct sockaddr_un addr;
 
     unsigned int min_delay;

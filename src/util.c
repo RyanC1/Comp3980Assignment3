@@ -72,13 +72,14 @@ char *concat_string(const char *str1, const char *str2)
     {
         return NULL;
     }
+    memset(result, 0, len);
 
-    snprintf(result, len, "%s%s", str1, str2);
+    sprintf(result, "%s%s", str1, str2);
 
     return result;
 }
 
-int create_un_socket()
+int create_un_socket(void)
 {
     int socket_fd;
 

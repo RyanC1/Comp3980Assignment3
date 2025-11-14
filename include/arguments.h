@@ -12,8 +12,8 @@ struct arguments
     const char  *server_path;
     const char  *min_delay_str;
     const char  *max_delay_str;
-    int          num_files;
-    char **files;
+    int num_files;
+    char       **files;
 };
 
 #endif    // ARGUMENTS_H

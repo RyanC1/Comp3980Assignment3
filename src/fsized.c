@@ -152,9 +152,11 @@ int main(int argc, char *argv[])
     ctx.arguments->argv = argv;
     ctx.exit_code       = EXIT_SUCCESS;
 
+    // p101_env_set_tracer(env, p101_env_default_tracer);
+
     fsm = p101_fsm_info_create(env, err, "fsized-fsm", fsm_env, fsm_err, NULL);
 
-    p101_fsm_info_set_did_change_state_notifier(fsm, p101_fsm_info_default_did_change_state_notifier);    // TODO
+    // p101_fsm_info_set_did_change_state_notifier(fsm, p101_fsm_info_default_did_change_state_notifier);    // TODO
 
     p101_fsm_run(fsm, &from_state, &to_state, &ctx, transitions, sizeof(transitions));
     p101_fsm_info_destroy(env, &fsm);
@@ -300,6 +302,10 @@ done:
     {
         next_state = CLEANUP;
     }
+    else
+    {
+        printf("Server open.\n");
+    }
 
     return next_state;
 }
@@ -319,6 +325,7 @@ static p101_fsm_state_t wait_for_request(const struct p101_env *env, struct p101
     if(exit_flag)
     {
         next_state = CLEANUP;
+        printf("Closing server...\n");
     }
     else if(poll_result < 0)
     {
@@ -423,7 +430,7 @@ void handle_client_data(const struct p101_env *env, struct p101_error *err, int 
 
     if(safe_read(client_socket, &filename_length, sizeof(uint16_t), true) < 0)
     {
-        respond(env, err, client_socket, "Failed to parse size of filename");
+        respond(env, err, client_socket, "Server failed to parse size of filename");
         goto done;
     }
 
@@ -436,7 +443,7 @@ void handle_client_data(const struct p101_env *env, struct p101_error *err, int 
 
     if(safe_read(client_socket, filename, filename_length, true) < 0)
     {
-        respond(env, err, client_socket, "Failed to parse filename");
+        respond(env, err, client_socket, "Server failed to parse filename");
         goto done;
     }
 
@@ -444,7 +451,7 @@ void handle_client_data(const struct p101_env *env, struct p101_error *err, int 
 
     if(p101_error_has_no_error(err) && file_details != NULL)
     {
-        respond(env, err, client_socket, filename);
+        respond(env, err, client_socket, file_details);
     }
 
 done:
@@ -457,7 +464,7 @@ static char *read_client_file(const struct p101_env *env, struct p101_error *err
     int         client_fd;
     char       *response;
     struct stat file_stat;
-    char       *tmp_response;
+    char        size[SIZE_LEN];
 
     P101_TRACE(env);
 
@@ -466,24 +473,25 @@ static char *read_client_file(const struct p101_env *env, struct p101_error *err
 
     if(client_fd == -1)
     {
-        response = concat_string("Could not open file: ", filepath);
+        response = concat_string("Server could not open file: ", filepath);
         goto done;
     }
 
     if(fstat(client_fd, &file_stat) == -1)
     {
-        response = concat_string("Could not create fstat of: ", filepath);
+        response = concat_string("Server could not create fstat of: ", filepath);
         goto done;
     }
 
-    tmp_response = concat_string(filepath, " Size in bytes: ");
-
-    if(tmp_response != NULL)
+    if(!S_ISREG(file_stat.st_mode))
     {
-        char size[SIZE_LEN];
-        snprintf(size, sizeof(size), "%ld", file_stat.st_size);
-        response = concat_string(tmp_response, size);
+        response = concat_string(filepath, " is not a regular file");
+        goto done;
     }
+
+    snprintf(size, sizeof(size), "%ld", file_stat.st_size);
+
+    response = concat_string("Size in bytes: ", size);
 
 done:
     if(client_fd > 0 && p101_close(env, err, client_fd) == -1)
@@ -516,7 +524,7 @@ static void respond(const struct p101_env *env, struct p101_error *err, int clie
         actual_message = message;
     }
 
-    message_length = (uint16_t)strlen(message) + 1;
+    message_length = (uint16_t)(strlen(message) + 1);
 
     safe_write(client_socket, &message_length, sizeof(uint16_t));
     safe_write(client_socket, actual_message, message_length);
@@ -591,7 +599,7 @@ static p101_fsm_state_t usage(const struct p101_env *env, struct p101_error *err
     fprintf(stderr, "Usage: %s [-h] <socket-path> \n", ctx->arguments->program_name);
     fputs("Options:\n", stderr);
     fputs("  -h                Display this help message and exit\n", stderr);
-    fputs("  <socket_path>     Path to the domain socket (required)\n", stderr);
+    fputs("  <socket-path>     Path to the domain socket (required)\n", stderr);
 
     return CLEANUP;
 }
