@@ -39,7 +39,7 @@ static p101_fsm_state_t wait_for_request(const struct p101_env *env, struct p101
 static p101_fsm_state_t handle_requests(const struct p101_env *env, struct p101_error *err, void *context);
 static void             handle_new_connection(const struct p101_env *env, struct p101_error *err, int socket_fd, int **client_sockets, nfds_t *max_clients, struct pollfd **fds);
 static void             handle_client_data(const struct p101_env *env, struct p101_error *err, int client_socket);
-static char            *read_client_file(const struct p101_env *env, struct p101_error *err, char *filepath);
+static char            *read_client_file(const struct p101_env *env, struct p101_error *err, const char *filepath);
 static void             respond(const struct p101_env *env, struct p101_error *err, int client_socket, const char *message);
 static void             handle_client_disconnection(const struct p101_env *env, struct p101_error *err, int **client_sockets, nfds_t *max_clients, struct pollfd **fds, nfds_t client_index);
 static p101_fsm_state_t usage(const struct p101_env *env, struct p101_error *err, void *context);
@@ -67,6 +67,12 @@ static void setup_signal_handlers(void)
     action.sa_flags = 0;
 
     if(sigaction(SIGINT, &action, NULL) == -1)
+    {
+        perror("sigaction");
+        exit(EXIT_FAILURE);
+    }
+
+    if(sigaction(SIGPIPE, &action, NULL) == -1)
     {
         perror("sigaction");
         exit(EXIT_FAILURE);
@@ -408,9 +414,10 @@ void handle_new_connection(const struct p101_env *env, struct p101_error *err, i
 
     if(new_fds != NULL)
     {
-        *fds                        = new_fds;
-        (*fds)[*max_clients].fd     = new_socket;
-        (*fds)[*max_clients].events = POLLIN;
+        *fds                         = new_fds;
+        (*fds)[*max_clients].fd      = new_socket;
+        (*fds)[*max_clients].events  = POLLIN;
+        (*fds)[*max_clients].revents = 0;
     }
 
 done:
@@ -459,7 +466,7 @@ done:
     p101_free(env, filename);
 }
 
-static char *read_client_file(const struct p101_env *env, struct p101_error *err, char *filepath)
+static char *read_client_file(const struct p101_env *env, struct p101_error *err, const char *filepath)
 {
     int         client_fd;
     char       *response;
@@ -513,7 +520,6 @@ static void respond(const struct p101_env *env, struct p101_error *err, int clie
     const char *actual_message;
 
     P101_TRACE(env);
-
     if(strlen(message) + 1 > UINT16_MAX)
     {
         actual_message = "Response too big to send";
@@ -531,7 +537,7 @@ static void respond(const struct p101_env *env, struct p101_error *err, int clie
 
     if(client_socket_close == 1)
     {
-        printf("Client Socket closed before response \"%s\" finished.\n", message);
+        printf("Client Socket closed before response \"%s\" was fully sent.\n", message);
         client_socket_close = 0;
     }
     else

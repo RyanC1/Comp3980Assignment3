@@ -1,8 +1,6 @@
 #ifndef ARGUMENTSD_H
 #define ARGUMENTSD_H
 
-#include <stdbool.h>
-
 struct argumentsd
 {
     int argc;

@@ -33,6 +33,11 @@ ssize_t safe_read(const int fd, void *buf, const size_t count, bool exact)
 
     } while(total < count && n != 0);
 
+    if(exact && count != total)
+    {
+        return -1;
+    }
+
     return (ssize_t)total;
 }
 

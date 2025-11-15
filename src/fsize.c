@@ -55,6 +55,7 @@ int main(int argc, char *argv[])
         {HANDLE_ARGS,     USAGE,           usage           },
         {HANDLE_ARGS,     CLEANUP,         cleanup         },
         {CREATE_REQUESTS, CLEANUP,         cleanup         },
+        {USAGE,           CLEANUP,         cleanup         },
         {CLEANUP,         P101_FSM_EXIT,   NULL            }
     };
 
@@ -67,6 +68,12 @@ int main(int argc, char *argv[])
     struct p101_env      *fsm_env;
     struct arguments      args;
     struct context        ctx;
+
+    if(signal(SIGPIPE, SIG_IGN) == SIG_ERR)
+    {
+        perror("sigpipe");
+        exit(EXIT_FAILURE);
+    }
 
     err = p101_error_create(false);
 
@@ -374,13 +381,13 @@ static p101_fsm_state_t create_requests(const struct p101_env *env, struct p101_
         char msg[MSG_LEN];
 
         snprintf(msg, sizeof msg, "%lu threads failed to close their sever connections.", atomic_load(&failed_threads));
-        P101_ERROR_RAISE_USER(err, msg, ERR_USAGE);
+        P101_ERROR_RAISE_USER(err, msg, ERR_OTHER);
     }
 
     if(pthread_mutex_destroy(&print_mutex) != 0)
     {
         p101_error_reset(err);
-        P101_ERROR_RAISE_USER(err, "Could not destory client mutex", ERR_USAGE);
+        P101_ERROR_RAISE_USER(err, "Could not destory client mutex", ERR_OTHER);
     }
 
 done:
